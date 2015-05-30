@@ -1,0 +1,77 @@
+module test-module {
+	namespace "urn:tester:one";
+	prefix "tmo";
+
+	organization "";
+	contact "";
+	description "";
+	revision 2015-05-30 {
+		description "initial";
+		reference "testing";
+	}
+
+	container simplecontainer {
+		description "";
+		leaf simpleleaf {
+			type string;
+			description "";
+		}
+	}
+
+	container maincontainer {
+		description "";		
+		list mainlist {
+			key first;
+
+			description "";
+
+
+			leaf first {
+				type string;
+				description "";
+			}
+			leaf second {
+				type string;
+				description "";
+			}
+			leaf third {
+				type string;
+				description "";
+			}
+
+			container containerinlist {
+				description "";
+				leaf deeperleaf {
+					type string;
+					description "";
+				}
+
+				list verydeeplist {
+					key akey;
+					description "";
+
+					leaf akey {
+						type string;
+						description "";
+					}
+				}
+			}
+		}
+	}
+
+	container acontainer {
+		description "";
+		container subcontainer {
+			description "";
+			leaf deepleaf {
+				type uint8;
+				description "";
+			}
+		}
+	}
+
+	leaf-list sklabini {
+		type string;
+		description "";
+	}
+}
