@@ -1,10 +1,12 @@
 """Swagger generator
 """
+from __future__ import print_function
 
 import optparse
 import sys
 import re
 import string
+import logging
 
 import types
 import StringIO
@@ -14,8 +16,9 @@ import json
 from pyang import plugin
 from pyang import statements
 
-path_resource_types = ["container", "list"]
+path_resource_types = ["container", "list", "leaf-list", "leaf"]
 delimiter = ""
+debug = False
 schema_depth = 0
 
 def pyang_plugin_init():
@@ -53,6 +56,10 @@ class SwaggerPlugin(plugin.PyangPlugin):
                                  dest = 'swaggerSchemaVersion',
                                  default = '0.1',
                                  help = 'Swagger schema version'),
+            optparse.make_option('--swagger-debug',
+                                 dest = 'swaggerDebug',
+                                 action = "store_true",
+                                 help = 'Swagger debug'),
             ]
 
         g = optparser.add_option_group("Swagger specific options")
@@ -73,26 +80,30 @@ class SwaggerEmitter(object):
 		global schema_depth
 		schema_depth = int(ctx.opts.swaggerSchemaDepth)
 
+		if ctx.opts.swaggerDebug == True:
+			logging.basicConfig(level=logging.DEBUG)
+
 		for module in modules:
-			print '{'
-			print '  "swagger": "2.0",'
-			print '  "host": "%s",' % ctx.opts.swaggerHost
-			print '  "basePath": "%s",' % ctx.opts.swaggerBasePath
-			print '  "schemes": ["http"],'
-			print '  "info": {'
-			print '    "title": "%s",' % ctx.opts.swaggerSchemaTitle
-			print '	   "version": "%s"' % ctx.opts.swaggerSchemaVersion
-			print '  },'
-			print '  "paths": {'
+			print('{')
+			print('  "swagger": "2.0",')
+			print('  "host": "%s",' % ctx.opts.swaggerHost)
+			print('  "basePath": "%s",' % ctx.opts.swaggerBasePath)
+			print('  "schemes": ["http"],')
+			print('  "info": {')
+			print('    "title": "%s",' % ctx.opts.swaggerSchemaTitle)
+			print('	   "version": "%s"' % ctx.opts.swaggerSchemaVersion)
+			print('  },')
+			print('  "paths": {')
 			statements.iterate_i_children(module, check_object)
-			print '  }'
-			print '}'
+			print('  }')
+			print('}')
 
 def check_object(stmt):
-	# print "in check_object:", stmt.arg, stmt.keyword
+	logging.debug("in check_object: %s %s", stmt.arg, stmt.keyword)
 	global schema_depth
 
 	if stmt.keyword == "rpc":
+	# No support for RPCs
 		return "continue"
 
 	depth = check_depth(stmt)
@@ -104,7 +115,7 @@ def check_object(stmt):
 	return None
 
 def check_depth(stmt):
-	# print "in check_depth with stmt %s" % stmt.keyword, stmt.arg
+	logging.debug("in check_depth with stmt %s %s", stmt.keyword, stmt.arg)
 	depth = 0
 	s = stmt
 	t = stmt.top
@@ -114,117 +125,130 @@ def check_depth(stmt):
 	return depth - 1
 
 def produce_path_object_str(stmt):
-	# print "in produce_path_object_str with stmt %s" % stmt.keyword, stmt.arg
+	logging.debug("in produce_path_object_str with stmt %s %s", stmt.keyword, stmt.arg)
 	global delimiter
 	path = statements.mk_path_str(stmt)
 
-	print '', delimiter
+	print('', delimiter)
 	delimiter = ','
-	print '    "%s": {' % path
-	print '      "get": {'
-	print '        "produces": ['
-	print '          "application/vnd.yang.data+json",'
-	print '          "application/vnd.yang.data+xml"'
-	print '        ],'
-	print '        "responses": {'
-	print '          "200": {'
-	print '            "description": "Some description",'
-	print '            "schema": {'
+	print('    "%s": {' % path)
+	print('      "get": {')
+	print('        "produces": [')
+	print('          "application/vnd.yang.data+json",')
+	print('          "application/vnd.yang.data+xml"')
+	print('        ],')
+	print('        "responses": {')
+	print('          "200": {')
+	print('            "description": "Some description",')
+	print('            "schema": {')
 
-	if stmt.keyword == "list":
-		print '              "type": "array",'
-		print '              "items": ['
+	if stmt.keyword == "leaf":
+		type, format = type_trans(str(stmt.search_one('type').arg))
+		print('              "type": "%s"' % type )
+
+	if stmt.keyword == "list":		
+		print('              "type": "array",')
+		print('              "items": [')
 		for s in stmt.i_children:
 			produce_schema_str(s)
-		print '              ]'
+		print('              ]')
+
+	if stmt.keyword == "leaf-list":
+		type, format = type_trans(str(stmt.search_one('type').arg))
+		print('              "type": "array",')
+		print('              "items": [')
+		print('              	"type": "%s"' % type )		
+		print('              ]')
 
 	if stmt.keyword == "container":
-		print '              "type": "object",'
-		print '				 "properties": {'
-		print '                "%s": {' % stmt.arg
-		print '                  "properties": {'
+		print('              "type": "object",')
+		print('				 "properties": {')
+		print('                "%s": {' % stmt.arg)
+		print('                  "properties": {')
 		for s in stmt.i_children:
 			produce_schema_str(s)
-		print '                  }'
-		print '                }'
-		print '              }'
+		print('                  }')
+		print('                }')
+		print('              }')
 
-	print '            }'
-	print '          }'
-	print '        }'
-	print '      }'
-	print '    }'
+	print('            }')
+	print('          }')
+	print('        }')
+	print('      }')
+	print('    }')
 
 def produce_schema_str(stmt):
+	logging.debug("in produce_schema: %s %s", stmt.keyword, stmt.arg)
 	depth =  0
 	last = False
 	top = stmt
-	# print "in produce_schema: %s" % stmt.keyword, stmt.arg
 
 	def _produce_node_iter(stmt, last, top):
 		# print "in produce_node_iter: %s" % stmt.keyword, stmt.arg
 		path = statements.mk_path_str(stmt)
 
 		if stmt.keyword == "leaf":
-			type = type_trans(str(stmt.search_one('type').arg))
+			type, format = type_trans(str(stmt.search_one('type').arg))
 			if stmt.parent.keyword == "list":
-				print '{'
-				print '  "type": "object",'
-				print '  "properties": {'
+				print('{')
+				print('  "type": "object",')
+				print('  "properties": {')
 			if type == 'enumeration':
-				print '"%s": {' % stmt.arg
-				print '  "enum": ['
+				print('"%s": {' % stmt.arg)
+				print('  "enum": [')
 				for ch in stmt.search("type"):
 					for enum in ch.search("enum"):
 						if ch.search("enum")[-1] == enum:
-							print '"%s"' % enum.arg
+							print('"%s"' % enum.arg)
 						else:
-							print '"%s",' % enum.arg
-				print '  ]'
+							print('"%s",' % enum.arg)
+				print('  ]')
 			else:
-				print '"%s": {' % stmt.arg
-				print '  "type": "%s"' % type
+				print('"%s": {' % stmt.arg)
+				print('  "type": "%s"' % type)
+				if format is not None:
+					print('  ,"format": "%s"' % format)
 			if stmt.parent.keyword == "list":
-				print '  }'
-				print '  }'
+				print('  }')
+				print('  }')
 			close_object(stmt, top)
 
 		if stmt.keyword == "leaf-list":
-			type = type_trans(str(stmt.search_one('type').arg))
-			print '"%s": {' % stmt.arg
-			print '  "type": "array",'
-			print '  "items": {'
-			print '    "type": "%s"' % type
-			print '  }'
+			type, format = type_trans(str(stmt.search_one('type').arg))
+			print('"%s": {' % stmt.arg)
+			print('  "type": "array",')
+			print('  "items": {')
+			print('    "type": "%s"' % type)
+			print('  }')
 			close_object(stmt, top)
 
 		if stmt.keyword == "list":
-			print '"%s": {' % stmt.arg
-			print '  "type": "array",'
-			print '  "items": ['
+			print('"%s": {' % stmt.arg)
+			print('  "type": "array",')
+			print('  "items": [')
 			if hasattr(stmt, 'i_children'):
 				for s in stmt.i_children:
 					_produce_node_iter(s, last, top)
 			pass
-			print '  ]'
+			print('  ]')
 			close_object(stmt, top)
 
 		if stmt.keyword == "container":
 			if stmt.parent.keyword == "list":
-				print '{'
-				print '  "type": "object",'
-				print '  "properties": {'
-			print '"%s": {' % stmt.arg
-			print '  "type": "object",'
-			print '  "properties": {'
+				print('{')
+				print('  "type": "object",')
+				print('  "properties": {')
+			print('"%s": {' % stmt.arg)
+			print('  "type": "object",')
+			print('  "properties": {')
 			if hasattr(stmt, 'i_children'):
 				for s in stmt.i_children:
 					_produce_node_iter(s, last, top)
 			pass
-			print '  }'
+			print('  }')
 			if stmt.parent.keyword == "list":
-				print '  }'
-				print '  }'
+				print('  }')
+				print('  }')
 			close_object(stmt, top)
 		if stmt.keyword == "choice":
 			# XXX: This needs more work, probably around JSON Schema 'oneOf'
@@ -255,28 +279,33 @@ def is_last(stmt):
 
 def close_object(stmt, top):
 	if statements.has_type(stmt, ["enumeration"]):
-		print "}"
+		print("}")
 		return
 	if is_last(stmt):
-		print "}"
+		print("}")
 		return
 	
-	print "},"
+	print("},")
 
 def type_trans(type):
 	ttype = "string"
+	tformat = None
 	type_trans_tbl = {
-		"int8":   "number",
-		"int16":  "number",
-		"int32":  "number",
-		"uint8":  "number",
-		"uint16": "number",
-		"uint32": "number",
+	#	YANG      JSON  schema
+		"int8":   ("number", None),
+		"int16":  ("number", None),
+		"int32":  ("integer", "int32"),
+		"int64":  ("integer", "int64"),
+		"uint8":  ("number", None),
+		"uint16": ("number", None),
+		"int32":  ("integer", "int32"),
+		"uint64": ("integer", "uint64"),
 		"enumeration": "enumeration"
 	}
 	if type in type_trans_tbl:
-		ttype = type_trans_tbl[type]
+		ttype = type_trans_tbl[type][0]
+		tformat = type_trans_tbl[type][1]
 
-	return ttype
+	return ttype, tformat
 
 
